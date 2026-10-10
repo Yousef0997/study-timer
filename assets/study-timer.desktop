@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Study Timer
+GenericName=Study Scheduler
+Comment=Daily study schedule with spoken alarms for courses, breaks, gym and meals
+Exec=study-timer
+Icon=study-timer
+Terminal=false
+Categories=Education;Utility;
+Keywords=study;timer;pomodoro;course;schedule;alarm;
+StartupWMClass=study-timer

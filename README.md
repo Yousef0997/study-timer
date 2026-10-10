@@ -1,0 +1,40 @@
+# Study Timer
+
+A daily study scheduler for Linux (built and tested on RHEL 10 / GNOME). Add your courses with a start time and
+length; each one starts by itself every chosen day, with a desktop notification, a bell and a spoken message,
+and rings an alarm when time is up. It keeps repeating until you mark the course done.
+
+Plan the rest of the day the same way: rest breaks, gym, lunch and dinner.
+
+## Features
+
+- **Daily scheduler**: courses, rest, gym, meals and other activities, each on chosen weekdays.
+- **Mark done**: a finished course leaves the schedule (you can restore it).
+- **Alarms**: notification + sound + English voice at the start, 5 minutes before the end and at the end.
+- **Today view**: a countdown dial with Pause, Add 5 min and Stop, plus the day's timeline and quick 5/10/15 minute breaks.
+- **Progress**: time studied today and this week, a study streak, a 7-day chart and totals per course.
+- **Start at login** switch in Settings (adds or removes `~/.config/autostart/study-timer.desktop`).
+- Closing the window minimizes it so alarms keep ringing (can be switched off); only one copy runs at a time.
+- Chalkboard (dark) and notebook (light) themes.
+
+## Install
+
+```bash
+./install.sh
+```
+
+This builds a release binary and installs it to `~/.local/bin/study-timer` with a menu entry and icon.
+It needs Rust (`curl https://sh.rustup.rs -sSf | sh`) and uses tools RHEL already ships:
+`notify-send`, `paplay`/`pw-play` and `espeak-ng`/`spd-say`.
+
+Your data lives in `~/.local/share/study-timer/data.json`.
+
+## Develop
+
+```bash
+cargo test        # scheduler, autostart and speech tests
+cargo run
+```
+
+`cargo build --features snapshot` adds a developer-only screenshot mode
+(`STUDY_TIMER_SNAPSHOT=out.png STUDY_TIMER_TAB=today|schedule|progress|settings`).
