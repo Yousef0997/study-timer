@@ -11,3 +11,8 @@ serde_json = "1.0.152"
 
 [features]
 snapshot = []
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

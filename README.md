@@ -29,6 +29,22 @@ It needs Rust (`curl https://sh.rustup.rs -sSf | sh`) and uses tools RHEL alread
 
 Your data lives in `~/.local/share/study-timer/data.json`.
 
+## Share with friends (app only, no source code)
+
+```bash
+packaging/build-installer.sh      # creates dist/study-timer-installer.run
+```
+
+Send them `dist/study-timer-installer.run`. They run:
+
+```bash
+chmod +x study-timer-installer.run
+./study-timer-installer.run              # install or update (no root needed)
+./study-timer-installer.run --uninstall  # remove
+```
+
+It needs a 64-bit Linux with glibc 2.39 or newer (RHEL 10, Fedora 40+, Ubuntu 24.04+, Debian 13+).
+
 ## Develop
 
 ```bash
