@@ -127,7 +127,7 @@ impl eframe::App for StudyApp {
 
         egui::Panel::top("top")
             .frame(Frame::new().fill(p.raised).inner_margin(Margin::symmetric(24, 12)).stroke(Stroke::new(1.0, p.line)))
-            .show(ui, |ui| self.top_bar(ui, &p, now));
+            .show(ui, |ui| self.top_bar(ui, &mut data, &p, now));
 
         let toast = self.toast.as_ref().filter(|(_, at)| at.elapsed() < Duration::from_secs(5)).map(|(m, _)| m.clone());
         if let Some(msg) = toast {
@@ -239,7 +239,7 @@ fn until_label(now: DateTime<Local>, at: DateTime<Local>) -> String {
 // ---------- top bar ----------
 
 impl StudyApp {
-    fn top_bar(&mut self, ui: &mut Ui, p: &Palette, now: DateTime<Local>) {
+    fn top_bar(&mut self, ui: &mut Ui, data: &mut Data, p: &Palette, now: DateTime<Local>) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Study Timer").font(display_font(22.0)).color(p.text));
             ui.add_space(10.0);
@@ -259,8 +259,30 @@ impl StudyApp {
                     }
                     ui.add_space(14.0);
                 }
+                ui.add_space(10.0);
+                self.focus_switch(ui, data, p);
             });
         });
+    }
+}
+
+impl StudyApp {
+    fn focus_switch(&mut self, ui: &mut Ui, data: &mut Data, p: &Palette) {
+        let on = &mut data.settings.focus_mode;
+        let hint = if *on {
+            "On: each scheduled item starts and ends by itself"
+        } else {
+            "Off: nothing starts by itself until you turn this on"
+        };
+        if toggle_switch(ui, on, p).on_hover_text(hint).changed() {
+            self.dirty = true;
+            self.say(if *on {
+                "Focus Mode on. Your schedule now starts and ends by itself."
+            } else {
+                "Focus Mode off. Running timers keep going, but nothing new starts by itself."
+            });
+        }
+        ui.label(RichText::new("Focus Mode").size(15.5).color(if data.settings.focus_mode { p.accent } else { p.dim }));
     }
 }
 
@@ -359,6 +381,9 @@ impl StudyApp {
                 self.tab = Tab::Schedule;
             }
             return;
+        }
+        if !data.settings.focus_mode {
+            ui.label(RichText::new("Focus Mode is off: turn it on at the top to start each item on time automatically.").color(p.dim));
         }
         ui.add_space(6.0);
         let count = items.len();
@@ -1072,8 +1097,8 @@ impl StudyApp {
                     title: "Study Timer test".into(),
                     body: "This is how your alarms will sound.".into(),
                     speech: "Time is up. This is how Study Timer will sound.".into(),
-                    sound: Sound::End,
-                    urgent: false,
+                    sound: Some(Sound::End),
+                    ..Default::default()
                 });
             }
             if ui.button("Quit Study Timer").on_hover_text("Scheduled alarms will not ring until you open it again").clicked() {

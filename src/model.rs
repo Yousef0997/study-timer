@@ -8,6 +8,11 @@ use std::path::PathBuf;
 
 use crate::alerts::{Alert, Sound};
 
+/// The finish popup and alarm start this long before a session ends...
+pub const FINISH_LEAD_SECS: i64 = 5;
+/// ...and stop after this long, leaving a quiet gap before the next session starts on the dot.
+pub const FINISH_ALARM_SECS: u64 = 3;
+
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     Course,
@@ -152,6 +157,9 @@ pub struct Running {
     pub credited_secs: i64,
     pub segment_start: Option<DateTime<Local>>,
     pub warned: bool,
+    /// The finish popup and alarm have played (they start `FINISH_LEAD_SECS` before the end).
+    #[serde(default)]
+    pub finish_alerted: bool,
     pub started_on: NaiveDate,
 }
 
@@ -167,6 +175,7 @@ impl Running {
             credited_secs: 0,
             segment_start: Some(now),
             warned: false,
+            finish_alerted: false,
             started_on: now.date_naive(),
         }
     }
@@ -220,6 +229,7 @@ impl Running {
             None => self.ends_at += Duration::minutes(minutes),
         }
         self.warned = false;
+        self.finish_alerted = false;
     }
 }
 
@@ -240,11 +250,13 @@ pub struct Settings {
     pub warn_before_end: bool,
     pub minimize_on_close: bool,
     pub dark: bool,
+    /// While on, scheduled activities start and end by themselves; while off, only "Start now" starts them.
+    pub focus_mode: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { voice: true, sound: true, warn_before_end: true, minimize_on_close: true, dark: true }
+        Settings { voice: true, sound: true, warn_before_end: true, minimize_on_close: true, dark: true, focus_mode: false }
     }
 }
 
@@ -355,8 +367,8 @@ impl Data {
             title: format!("{name} completed"),
             body: "This course is finished and has left your daily schedule.".into(),
             speech: format!("Congratulations! You finished the {name} course."),
-            sound: Sound::Done,
-            urgent: false,
+            sound: Some(Sound::Done),
+            ..Default::default()
         })
     }
 
@@ -387,6 +399,7 @@ impl Data {
     pub fn tick(&mut self, now: DateTime<Local>) -> (Vec<Alert>, bool) {
         let today = now.date_naive();
         let mut alerts = Vec::new();
+        let mut finish_words = Vec::new();
         let mut changed = false;
 
         let mut i = 0;
@@ -397,10 +410,18 @@ impl Data {
                 self.log_session(&r, r.active_secs(r.ends_at));
                 // Don't ring for a session that ended long ago while the app was closed.
                 if (now - r.ends_at).num_seconds() < 120 {
-                    alerts.push(end_alert(&r));
+                    if !r.finish_alerted {
+                        alerts.push(finish_alert(&r));
+                    }
+                    finish_words.push(finish_speech(&r));
                 }
                 changed = true;
                 continue;
+            }
+            if !r.finish_alerted && !r.is_paused() && r.total_secs > FINISH_LEAD_SECS && r.millis_left(now) <= FINISH_LEAD_SECS * 1000 {
+                r.finish_alerted = true;
+                alerts.push(finish_alert(r));
+                changed = true;
             }
             if self.settings.warn_before_end && !r.warned && !r.is_paused() && r.total_secs >= 15 * 60 && r.secs_left(now) <= 5 * 60 {
                 r.warned = true;
@@ -408,15 +429,19 @@ impl Data {
                     title: format!("5 minutes left: {}", r.name),
                     body: "Start wrapping up.".into(),
                     speech: format!("5 minutes left for {}.", r.name),
-                    sound: Sound::Warn,
-                    urgent: false,
+                    sound: Some(Sound::Warn),
+                    ..Default::default()
                 });
                 changed = true;
             }
             i += 1;
         }
 
+        let mut started_any = false;
         for a in self.activities.iter_mut() {
+            if !self.settings.focus_mode {
+                break;
+            }
             if !a.runs_on(today) || a.last_started == Some(today) {
                 continue;
             }
@@ -431,7 +456,12 @@ impl Data {
                 let r = Running::new(Some(a.id), a.name.clone(), a.kind, a.duration_min as i64 * 60, end, now);
                 alerts.push(start_alert(&r));
                 self.running.push(r);
+                started_any = true;
             }
+        }
+        // The spoken "time is up" would talk over the next session, so it is only said when nothing starts now.
+        if !started_any {
+            alerts.extend(finish_words);
         }
 
         (alerts, changed)
@@ -465,19 +495,32 @@ fn start_alert(r: &Running) -> Alert {
         Kind::Meal => (format!("{name} time"), format!("Time for {name}. Enjoy your meal.")),
         Kind::Other => (format!("{name} started"), format!("Time for {name}.")),
     };
-    Alert { title, body: format!("Timer set for {minutes}."), speech, sound: Sound::Start, urgent: true }
+    Alert { title, body: format!("Timer set for {minutes}."), speech, sound: Some(Sound::Start), urgent: true, lasts: None }
 }
 
-fn end_alert(r: &Running) -> Alert {
+/// Popup and alarm only, played in the last seconds of a session.
+fn finish_alert(r: &Running) -> Alert {
     let name = &r.name;
-    let (title, speech) = match r.kind {
-        Kind::Course => (format!("{name} session complete"), format!("Time is up. Great work on {name}. Take a short break.")),
-        Kind::Rest => ("Break is over".to_string(), "Break is over. Let's get back to work.".to_string()),
-        Kind::Gym => (format!("{name} finished"), format!("{name} session finished. Well done.")),
-        Kind::Meal => (format!("{name} is over"), format!("{name} time is over.")),
-        Kind::Other => (format!("{name} finished"), format!("Time is up for {name}.")),
+    let title = match r.kind {
+        Kind::Course => format!("{name} session complete"),
+        Kind::Rest => "Break is over".to_string(),
+        Kind::Gym | Kind::Other => format!("{name} finished"),
+        Kind::Meal => format!("{name} is over"),
     };
-    Alert { title, body: "Timer finished.".into(), speech, sound: Sound::End, urgent: true }
+    Alert { title, body: "Timer finished.".into(), sound: Some(Sound::End), urgent: true, lasts: Some(FINISH_ALARM_SECS), ..Default::default() }
+}
+
+/// Voice only, said at the end time.
+fn finish_speech(r: &Running) -> Alert {
+    let name = &r.name;
+    let speech = match r.kind {
+        Kind::Course => format!("Time is up. Great work on {name}. Take a short break."),
+        Kind::Rest => "Break is over. Let's get back to work.".to_string(),
+        Kind::Gym => format!("{name} session finished. Well done."),
+        Kind::Meal => format!("{name} time is over."),
+        Kind::Other => format!("Time is up for {name}."),
+    };
+    Alert { speech, ..Default::default() }
 }
 
 #[cfg(test)]
@@ -488,6 +531,12 @@ mod tests {
         // A Wednesday, so weekday filters can be checked.
         let d = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();
         Local.from_local_datetime(&d.and_hms_opt(h, m, s).unwrap()).earliest().unwrap()
+    }
+
+    fn focused() -> Data {
+        let mut data = Data::default();
+        data.settings.focus_mode = true;
+        data
     }
 
     fn course(data: &mut Data, hour: u32, minutes: u32) -> u64 {
@@ -508,7 +557,7 @@ mod tests {
 
     #[test]
     fn starts_at_scheduled_time_once_per_day() {
-        let mut data = Data::default();
+        let mut data = focused();
         course(&mut data, 8, 60);
         assert!(data.tick(at(7, 59, 59)).0.is_empty());
         let (alerts, _) = data.tick(at(8, 0, 0));
@@ -520,12 +569,80 @@ mod tests {
     }
 
     #[test]
-    fn rings_at_end_and_logs_session() {
+    fn nothing_starts_by_itself_outside_focus_mode() {
         let mut data = Data::default();
+        let id = course(&mut data, 8, 120);
+        assert!(data.tick(at(8, 0, 0)).0.is_empty());
+        assert!(data.running.is_empty());
+        // "Start now" still works with Focus Mode off.
+        assert!(data.start_now(id, at(8, 5, 0)).is_some());
+        assert_eq!(data.running.len(), 1);
+    }
+
+    #[test]
+    fn focus_mode_runs_the_day_back_to_back() {
+        let mut data = focused();
+        data.settings.warn_before_end = false;
+        course(&mut data, 8, 120);
+        data.add_activity(Activity {
+            id: 0,
+            name: "Rest break".into(),
+            kind: Kind::Rest,
+            hour: 10,
+            minute: 0,
+            duration_min: 15,
+            days: [true; 7],
+            enabled: true,
+            done_on: None,
+            last_started: None,
+        });
+        assert_eq!(data.tick(at(8, 0, 0)).0.len(), 1);
+        // 09:59:55: the course's finish popup and alarm, with no voice, and nothing starts yet.
+        assert!(data.tick(at(9, 59, 54)).0.is_empty());
+        let (alerts, _) = data.tick(at(9, 59, 55));
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].title, "System Design session complete");
+        assert!(matches!(alerts[0].sound, Some(Sound::End)));
+        assert_eq!(alerts[0].lasts, Some(FINISH_ALARM_SECS));
+        assert!(alerts[0].speech.is_empty());
+        for s in 56..60 {
+            assert!(data.tick(at(9, 59, s)).0.is_empty());
+        }
+        // 10:00:00 exactly: only the break's start; the course's spoken goodbye would talk over it.
+        let (alerts, _) = data.tick(at(10, 0, 0));
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].title, "Rest break started");
+        assert_eq!(alerts[0].speech, "Time to rest. Relax for 15 minutes.");
+        assert_eq!(data.running.len(), 1);
+        assert_eq!(data.running[0].name, "Rest break");
+        // Nothing follows the break, so its end time also gets the voice.
+        assert!(data.tick(at(10, 14, 55)).0[0].title.starts_with("Break is over"));
+        let (alerts, _) = data.tick(at(10, 15, 0));
+        assert_eq!(alerts.len(), 1);
+        assert!(alerts[0].title.is_empty() && alerts[0].sound.is_none());
+        assert_eq!(alerts[0].speech, "Break is over. Let's get back to work.");
+        assert!(data.running.is_empty());
+        // Ending on time does not mark the course done; that stays manual.
+        assert!(!data.activities[0].is_done());
+    }
+
+    #[test]
+    fn turning_focus_on_mid_slot_starts_the_remaining_time() {
+        let mut data = Data::default();
+        course(&mut data, 8, 120);
+        assert!(data.tick(at(9, 0, 0)).0.is_empty());
+        data.settings.focus_mode = true;
+        assert_eq!(data.tick(at(9, 0, 1)).0.len(), 1);
+        assert_eq!(data.running[0].secs_left(at(9, 0, 1)), 60 * 60 - 1);
+    }
+
+    #[test]
+    fn rings_at_end_and_logs_session() {
+        let mut data = focused();
         data.settings.warn_before_end = false;
         course(&mut data, 8, 60);
         data.tick(at(8, 0, 0));
-        assert!(data.tick(at(8, 59, 59)).0.is_empty());
+        assert_eq!(data.tick(at(8, 59, 55)).0.len(), 1);
         let (alerts, _) = data.tick(at(9, 0, 0));
         assert_eq!(alerts.len(), 1);
         assert!(alerts[0].speech.starts_with("Time is up"));
@@ -535,8 +652,20 @@ mod tests {
     }
 
     #[test]
+    fn adding_time_moves_the_finish_alarm() {
+        let mut data = focused();
+        data.settings.warn_before_end = false;
+        course(&mut data, 8, 60);
+        data.tick(at(8, 0, 0));
+        assert_eq!(data.tick(at(8, 59, 55)).0.len(), 1);
+        data.running[0].add_minutes(5);
+        assert!(data.tick(at(9, 0, 0)).0.is_empty());
+        assert_eq!(data.tick(at(9, 4, 55)).0.len(), 1);
+    }
+
+    #[test]
     fn warns_five_minutes_before_end() {
-        let mut data = Data::default();
+        let mut data = focused();
         course(&mut data, 8, 60);
         data.tick(at(8, 0, 0));
         let (alerts, _) = data.tick(at(8, 55, 0));
@@ -547,7 +676,7 @@ mod tests {
 
     #[test]
     fn starting_late_runs_only_the_remaining_time() {
-        let mut data = Data::default();
+        let mut data = focused();
         course(&mut data, 8, 60);
         data.tick(at(8, 40, 0));
         assert_eq!(data.running[0].secs_left(at(8, 40, 0)), 20 * 60);
@@ -555,7 +684,7 @@ mod tests {
 
     #[test]
     fn done_course_stops_repeating() {
-        let mut data = Data::default();
+        let mut data = focused();
         let id = course(&mut data, 8, 60);
         data.tick(at(8, 0, 0));
         data.mark_done(id, at(8, 30, 0));
@@ -569,11 +698,11 @@ mod tests {
 
     #[test]
     fn skips_days_not_chosen_and_paused_items() {
-        let mut data = Data::default();
+        let mut data = focused();
         let id = course(&mut data, 8, 60);
         data.activity_mut(id).unwrap().days = [false, false, false, false, false, true, true];
         assert!(data.tick(at(8, 0, 0)).0.is_empty());
-        let mut data = Data::default();
+        let mut data = focused();
         let id = course(&mut data, 8, 60);
         data.activity_mut(id).unwrap().enabled = false;
         assert!(data.tick(at(8, 0, 0)).0.is_empty());
@@ -581,7 +710,7 @@ mod tests {
 
     #[test]
     fn pause_freezes_the_countdown() {
-        let mut data = Data::default();
+        let mut data = focused();
         data.settings.warn_before_end = false;
         course(&mut data, 8, 30);
         data.tick(at(8, 0, 0));
@@ -589,13 +718,15 @@ mod tests {
         assert!(data.tick(at(9, 0, 0)).0.is_empty());
         assert_eq!(data.running[0].secs_left(at(9, 0, 0)), 20 * 60);
         data.running[0].resume(at(9, 0, 0));
+        assert!(data.tick(at(9, 19, 54)).0.is_empty());
+        assert_eq!(data.tick(at(9, 19, 55)).0.len(), 1);
         assert_eq!(data.tick(at(9, 20, 0)).0.len(), 1);
         assert_eq!(data.log[0].minutes, 30);
     }
 
     #[test]
     fn no_alarm_for_sessions_that_ended_while_closed() {
-        let mut data = Data::default();
+        let mut data = focused();
         course(&mut data, 8, 60);
         data.tick(at(8, 0, 0));
         assert!(data.tick(at(12, 0, 0)).0.is_empty());
@@ -612,7 +743,7 @@ mod tests {
 
     #[test]
     fn saved_data_round_trips() {
-        let mut data = Data::default();
+        let mut data = focused();
         course(&mut data, 8, 60);
         data.tick(at(8, 0, 0));
         let json = serde_json::to_string(&data).unwrap();

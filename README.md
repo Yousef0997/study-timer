@@ -9,8 +9,12 @@ Plan the rest of the day the same way: rest breaks, gym, lunch and dinner.
 ## Features
 
 - **Daily scheduler**: courses, rest, gym, meals and other activities, each on chosen weekdays.
+- **Focus Mode** switch in the top bar: while on, each scheduled item starts and ends by itself, back to back.
+  While off, nothing starts by itself (use "Start now"). Switching it on mid-slot starts that item for the time left.
 - **Mark done**: a finished course leaves the schedule (you can restore it).
-- **Alarms**: notification + sound + English voice at the start, 5 minutes before the end and at the end.
+- **Alarms**: at the exact start time, a popup, a bell and an English voice. 5 seconds before the end, a popup and
+  the alarm for 3 seconds, so the next item starts on the dot with no overlap. If nothing follows, a voice says time
+  is up at the end time. Popups close by themselves. Optional reminder 5 minutes before the end.
 - **Today view**: a countdown dial with Pause, Add 5 min and Stop, plus the day's timeline and quick 5/10/15 minute breaks.
 - **Progress**: time studied today and this week, a study streak, a 7-day chart and totals per course.
 - **Start at login** switch in Settings (adds or removes `~/.config/autostart/study-timer.desktop`).
