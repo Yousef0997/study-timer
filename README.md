@@ -6,6 +6,12 @@ and rings an alarm when time is up. It keeps repeating until you mark the course
 
 Plan the rest of the day the same way: rest breaks, gym, lunch and dinner.
 
+![Today view: countdown dial for the running course and the day's plan](docs/screenshots/today-dark.png)
+
+| Schedule | Progress | Notebook (light) theme |
+| --- | --- | --- |
+| ![Schedule tab](docs/screenshots/schedule-dark.png) | ![Progress tab](docs/screenshots/progress-dark.png) | ![Today view in the light theme](docs/screenshots/today-light.png) |
+
 ## Features
 
 - **Daily scheduler**: courses, rest, gym, meals and other activities, each on chosen weekdays.
